@@ -9,6 +9,7 @@ from handlers.invite import handle_invite_request
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -16,6 +17,27 @@ router = Router()
 class UserRegistration(StatesGroup):
     waiting_for_phone = State()
     waiting_for_email = State()
+
+def is_valid_email(email: str) -> bool:
+    """Проверяет корректность email адреса"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def is_valid_phone(phone: str) -> bool:
+    """Проверяет корректность номера телефона"""
+    # Удаляем все не цифры из номера
+    cleaned_phone = re.sub(r'\D', '', phone)
+    # Проверяем длину и начало номера
+    return len(cleaned_phone) >= 10 and len(cleaned_phone) <= 15
+
+def format_phone(phone: str) -> str:
+    """Форматирует номер телефона в стандартный вид"""
+    cleaned_phone = re.sub(r'\D', '', phone)
+    if cleaned_phone.startswith('8'):
+        cleaned_phone = '7' + cleaned_phone[1:]
+    if not cleaned_phone.startswith('7'):
+        cleaned_phone = '7' + cleaned_phone
+    return f"+{cleaned_phone}"
 
 # Кнопка для получения инвайт-ссылки
 def get_invite_button() -> InlineKeyboardMarkup:
@@ -34,21 +56,23 @@ async def cmd_start(message: Message, session: AsyncSession, state: FSMContext):
         
         if user:
             await message.answer(
-                "Вы уже зарегистрированы! Используйте /info для просмотра информации о себе."
+                "✅ Вы уже зарегистрированы!\n"
+                "Используйте /info для просмотра информации о себе."
             )
             return
             
         # Создаем клавиатуру с кнопкой для отправки номера телефона
         keyboard = ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="Отправить номер телефона", request_contact=True)]
+                [KeyboardButton(text="📱 Отправить номер телефона", request_contact=True)]
             ],
             resize_keyboard=True
         )
         
         await message.answer(
-            "Добро пожаловать! Для регистрации нам нужен ваш номер телефона. "
-            "Пожалуйста, нажмите на кнопку ниже.",
+            "👋 Добро пожаловать!\n\n"
+            "Для регистрации нам нужен ваш номер телефона.\n"
+            "Пожалуйста, нажмите на кнопку ниже 👇",
             reply_markup=keyboard
         )
         
@@ -56,17 +80,37 @@ async def cmd_start(message: Message, session: AsyncSession, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Ошибка при обработке команды start: {e}")
-        await message.answer("Произошла ошибка. Попробуйте позже.")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
 
-@router.message(UserRegistration.waiting_for_phone, F.contact)
+@router.message(UserRegistration.waiting_for_phone)
 async def process_phone(message: Message, session: AsyncSession, state: FSMContext):
     """Обработка номера телефона"""
     try:
-        phone = message.contact.phone_number
-        await state.update_data(phone=phone)
+        if message.contact:
+            phone = message.contact.phone_number
+        else:
+            phone = message.text
+
+        if not phone:
+            await message.answer(
+                "❌ Пожалуйста, отправьте номер телефона, используя кнопку ниже или введите его вручную.\n"
+                "Формат: +7XXXXXXXXXX"
+            )
+            return
+
+        if not is_valid_phone(phone):
+            await message.answer(
+                "❌ Некорректный формат номера телефона.\n"
+                "Пожалуйста, используйте кнопку или введите номер в формате: +7XXXXXXXXXX"
+            )
+            return
+
+        formatted_phone = format_phone(phone)
+        await state.update_data(phone=formatted_phone)
         
         await message.answer(
-            "Отлично! Теперь введите ваш email:",
+            "✅ Номер телефона принят!\n\n"
+            "Теперь введите ваш email:",
             reply_markup=ReplyKeyboardRemove()
         )
         
@@ -74,13 +118,22 @@ async def process_phone(message: Message, session: AsyncSession, state: FSMConte
         
     except Exception as e:
         logger.error(f"Ошибка при обработке номера телефона: {e}")
-        await message.answer("Произошла ошибка. Попробуйте позже.")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
 
 @router.message(UserRegistration.waiting_for_email)
 async def process_email(message: Message, session: AsyncSession, state: FSMContext):
     """Обработка email"""
     try:
-        email = message.text
+        email = message.text.lower().strip()
+
+        if not is_valid_email(email):
+            await message.answer(
+                "❌ Некорректный формат email.\n"
+                "Пожалуйста, введите корректный email адрес.\n"
+                "Пример: user@example.com"
+            )
+            return
+
         user_data = await state.get_data()
         phone = user_data.get("phone")
         
@@ -94,14 +147,19 @@ async def process_email(message: Message, session: AsyncSession, state: FSMConte
         )
         
         await message.answer(
-            "Регистрация успешно завершена! Используйте /info для просмотра информации о себе."
+            "✅ Регистрация успешно завершена!\n\n"
+            "📋 Ваши данные:\n"
+            f"👤 Имя: {user.full_name}\n"
+            f"📱 Телефон: {user.phone}\n"
+            f"📧 Email: {user.email}\n\n"
+            "Используйте /info для просмотра информации о себе."
         )
         
         await state.clear()
         
     except Exception as e:
         logger.error(f"Ошибка при обработке email: {e}")
-        await message.answer("Произошла ошибка. Попробуйте позже.")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
 
 
 @router.callback_query(F.data == "get_invite_link")
