@@ -1,5 +1,6 @@
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.state import State, StatesGroup
 
-class Registration(StatesGroup):
-    full_name = State()
-    email = State()
+class RegistrationState(StatesGroup):
+    """Состояния для процесса регистрации"""
+    full_name = State()  # Полное имя пользователя
+    email = State()      # Email пользователя

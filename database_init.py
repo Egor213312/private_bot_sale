@@ -1,6 +1,6 @@
-from database import engine
-from models import Base
+from db import create_db
 
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+# Этот файл теперь просто запускает create_db
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(create_db())
