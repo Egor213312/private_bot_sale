@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 from models import User, InviteLink, Subscription, Invite
 from db import get_user_by_id
 from utils.subscription_manager import create_subscription, check_subscription_status
+from config import ADMIN_IDS
 import os
 import logging
 from datetime import datetime, timedelta
@@ -15,9 +16,6 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-ADMIN_IDS = list(map(int, os.getenv("ADMIN_ID", "").split(",")))
-CHAT_ID = int(os.getenv("CHAT_ID", "0"))
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -33,12 +31,6 @@ def get_user_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="🎁 Выдать подписку",
                 callback_data=f"give_sub_{user_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔗 Сгенерировать инвайт",
-                callback_data=f"generate_invite_{user_id}"
             )
         ]
     ]
@@ -254,33 +246,66 @@ async def cmd_admin_stats(message: Message, session: AsyncSession):
         await message.answer("❌ Произошла ошибка при получении статистики")
 
 @router.callback_query(lambda c: c.data.startswith('delete_user_'))
-async def process_delete_user(callback: CallbackQuery, session: AsyncSession):
-    """Обработка удаления пользователя"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔️ У вас нет доступа к этой функции")
-        return
-
+async def process_delete_user(callback: CallbackQuery, bot: Bot, session: AsyncSession):
+    """Обработчик удаления пользователя"""
     try:
-        user_id = int(callback.data.split('_')[2])
-        user = await get_user_by_id(session, user_id)
-        
-        if not user:
-            await callback.answer("❌ Пользователь не найден")
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав администратора")
             return
 
-        # Удаляем пользователя и все связанные данные
-        await session.delete(user)
-        await session.commit()
+        user_id = int(callback.data.split('_')[2])
         
-        await callback.answer("✅ Пользователь успешно удален")
-        await callback.message.edit_text(
-            f"❌ Пользователь {user.full_name} удален",
-            reply_markup=None
-        )
-    
+        async with session.begin():
+            user = await session.get(User, user_id)
+            if not user:
+                await callback.answer("Пользователь не найден")
+                return
+
+            # Удаляем все инвайт-ссылки, созданные пользователем
+            invite_links = await session.execute(
+                select(InviteLink).where(InviteLink.created_by_id == user_id)
+            )
+            for invite_link in invite_links.scalars():
+                await session.delete(invite_link)
+
+            # Удаляем все инвайт-ссылки, использованные пользователем
+            used_invites = await session.execute(
+                select(InviteLink).where(InviteLink.used_by_id == user_id)
+            )
+            for invite in used_invites.scalars():
+                invite.used_by_id = None
+                invite.is_used = False
+                invite.used_at = None
+
+            # Попытка удалить пользователя из закрытого канала
+            try:
+                await bot.ban_chat_member(
+                    chat_id=config.CLOSED_CHANNEL_ID,
+                    user_id=user_id
+                )
+                await bot.unban_chat_member(
+                    chat_id=config.CLOSED_CHANNEL_ID,
+                    user_id=user_id
+                )
+                logger.info(f"User {user_id} removed from closed channel")
+            except Exception as e:
+                logger.error(f"Error removing user {user_id} from closed channel: {e}")
+
+            # Удаляем пользователя из базы данных
+            await session.delete(user)
+            await session.commit()
+            
+            await callback.answer("Пользователь успешно удален")
+            await callback.message.edit_text(
+                text=f"Пользователь {user_id} был удален",
+                reply_markup=None
+            )
+            logger.info(f"User {user_id} deleted from database")
+            
     except Exception as e:
-        logger.error(f"Ошибка при удалении пользователя: {e}")
-        await callback.answer("❌ Произошла ошибка при удалении пользователя")
+        logger.error(f"Error in process_delete_user: {e}")
+        await callback.answer("Произошла ошибка при удалении пользователя")
+        return
 
 @router.callback_query(lambda c: c.data.startswith('give_sub_'))
 async def process_give_subscription(callback: CallbackQuery, session: AsyncSession):

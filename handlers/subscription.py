@@ -13,6 +13,7 @@ from sqlalchemy import select
 from db import get_user_by_telegram_id
 import logging
 from datetime import datetime, timedelta
+from config import SUBSCRIPTION_PRICES, PAYMENT_CARD, PAYMENT_RECEIVER
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -38,6 +39,30 @@ def get_subscription_keyboard(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="1 год",
                 callback_data=f"sub_extend_{user_id}_365"
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_subscription_keyboard() -> InlineKeyboardMarkup:
+    """Создает клавиатуру с тарифами подписки"""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text=f"1 месяц - {SUBSCRIPTION_PRICES[1]}₽",
+                callback_data="buy_sub_1"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"3 месяца - {SUBSCRIPTION_PRICES[3]}₽",
+                callback_data="buy_sub_3"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"12 месяцев - {SUBSCRIPTION_PRICES[12]}₽",
+                callback_data="buy_sub_12"
             )
         ]
     ]
@@ -220,4 +245,63 @@ async def process_subscription_extend(callback: CallbackQuery, session: AsyncSes
         
     except Exception as e:
         logger.error(f"Ошибка при обработке продления подписки: {e}")
-        await callback.answer("❌ Произошла ошибка. Попробуйте позже.") 
+        await callback.answer("❌ Произошла ошибка. Попробуйте позже.")
+
+@router.message(Command("buy"))
+async def cmd_buy(message: Message, session: AsyncSession):
+    """Обработчик команды /buy"""
+    try:
+        # Проверяем, есть ли у пользователя активная подписка
+        is_active, days_left = await check_subscription_status(session, message.from_user.id)
+        if is_active:
+            await message.answer(
+                f"У вас уже есть активная подписка!\n"
+                f"Осталось дней: {days_left}"
+            )
+            return
+
+        # Отправляем сообщение с тарифами
+        await message.answer(
+            "🎁 <b>Выберите тариф подписки:</b>\n\n"
+            "1️⃣ 1 месяц - доступ ко всем функциям\n"
+            "2️⃣ 3 месяца - скидка 17%\n"
+            "3️⃣ 12 месяцев - скидка 33%\n\n"
+            "После оплаты отправьте чек администратору в личные сообщения",
+            reply_markup=get_subscription_keyboard(),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in cmd_buy: {e}")
+        await message.answer("Произошла ошибка при обработке команды")
+
+@router.callback_query(lambda c: c.data.startswith('buy_sub_'))
+async def process_buy_subscription(callback: CallbackQuery, session: AsyncSession):
+    """Обработчик выбора тарифа подписки"""
+    try:
+        months = int(callback.data.split('_')[2])
+        price = SUBSCRIPTION_PRICES[months]
+        
+        # Формируем сообщение с реквизитами
+        payment_message = (
+            f"💳 <b>Оплата подписки на {months} месяц(ев)</b>\n\n"
+            f"Сумма к оплате: {price}₽\n\n"
+            "Реквизиты для оплаты:\n"
+            f"Карта: {PAYMENT_CARD}\n"
+            f"Получатель: {PAYMENT_RECEIVER}\n\n"
+            "После оплаты:\n"
+            "1. Сделайте скриншот чека\n"
+            "2. Отправьте его администратору в личные сообщения\n"
+            f"3. Укажите ваш ID: {callback.from_user.id}\n\n"
+            "После проверки платежа подписка будет активирована в течение 24 часов"
+        )
+
+        await callback.message.edit_text(
+            text=payment_message,
+            parse_mode="HTML"
+        )
+        await callback.answer()
+
+    except Exception as e:
+        logger.error(f"Error in process_buy_subscription: {e}")
+        await callback.answer("Произошла ошибка при обработке платежа") 
