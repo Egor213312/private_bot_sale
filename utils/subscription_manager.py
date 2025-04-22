@@ -7,30 +7,37 @@ import asyncio
 import logging
 import os
 from dotenv import load_dotenv
+import secrets
+import string
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Получаем ID канала из переменных окружения
-CHAT_ID = os.getenv("CHAT_ID")
-PRIVATE_CHANNEL_ID = os.getenv("PRIVATE_CHANNEL_ID")
+CHAT_ID = int(os.getenv("CHAT_ID", "0"))
+if CHAT_ID == 0:
+    logger.error("CHAT_ID not found in environment variables")
+    raise ValueError("CHAT_ID must be set in environment variables")
 
-# Используем CHAT_ID или PRIVATE_CHANNEL_ID
-TARGET_CHAT = CHAT_ID or PRIVATE_CHANNEL_ID
-if not TARGET_CHAT:
-    logger.error("Neither CHAT_ID nor PRIVATE_CHANNEL_ID found in environment variables")
-    raise ValueError("Either CHAT_ID or PRIVATE_CHANNEL_ID must be set in environment variables")
-
-# Преобразуем CHAT_ID в int, если это число
-try:
-    TARGET_CHAT = int(TARGET_CHAT)
-except ValueError:
-    # Если это не число (например, @channel_name), оставляем как есть
-    pass
+def generate_invite_code(length: int = 8) -> str:
+    """Генерирует уникальный код для инвайт-ссылки"""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 async def create_subscription(session: AsyncSession, user_id: int, duration_days: int) -> Subscription:
     """Создает новую подписку для пользователя"""
     try:
+        # Деактивируем все текущие подписки пользователя
+        current_subs = await session.execute(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.is_active == True
+            )
+        )
+        for sub in current_subs.scalars():
+            sub.is_active = False
+
+        # Создаем новую подписку
         start_date = datetime.now()
         end_date = start_date + timedelta(days=duration_days)
         
@@ -41,8 +48,15 @@ async def create_subscription(session: AsyncSession, user_id: int, duration_days
             is_active=True
         )
         
+        # Обновляем статус подписки у пользователя
+        user = await session.execute(select(User).where(User.id == user_id))
+        user = user.scalar_one()
+        user.is_subscribed = True
+        
         session.add(subscription)
         await session.commit()
+        
+        logger.info(f"Создана новая подписка для пользователя {user_id} на {duration_days} дней")
         return subscription
         
     except Exception as e:
@@ -53,6 +67,16 @@ async def create_subscription(session: AsyncSession, user_id: int, duration_days
 async def check_subscription_status(session: AsyncSession, user_id: int) -> tuple[bool, int]:
     """Проверяет статус подписки пользователя"""
     try:
+        # Сначала проверяем, есть ли пользователь
+        user_query = select(User).where(User.id == user_id)
+        user_result = await session.execute(user_query)
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            logger.warning(f"Пользователь {user_id} не найден при проверке подписки")
+            return False, 0
+
+        # Проверяем активную подписку
         query = select(Subscription).where(
             and_(
                 Subscription.user_id == user_id,
@@ -61,41 +85,55 @@ async def check_subscription_status(session: AsyncSession, user_id: int) -> tupl
         )
         result = await session.execute(query)
         subscription = result.scalar_one_or_none()
-        
+
         if not subscription:
+            logger.info(f"У пользователя {user_id} нет активной подписки")
             return False, 0
-            
-        days_left = (subscription.end_date - datetime.now()).days
-        return days_left > 0, days_left
-        
+
+        now = datetime.now()
+        if subscription.end_date <= now:
+            logger.info(f"Подписка пользователя {user_id} истекла")
+            subscription.is_active = False
+            await session.commit()
+            return False, 0
+
+        days_left = (subscription.end_date - now).days
+        logger.info(f"У пользователя {user_id} активная подписка, осталось {days_left} дней")
+        return True, days_left
+
     except Exception as e:
-        logger.error(f"Ошибка при проверке подписки: {e}")
+        logger.error(f"Ошибка при проверке статуса подписки пользователя {user_id}: {e}")
         return False, 0
 
 async def generate_invite_link(session: AsyncSession, user_id: int, bot: Bot) -> str:
     """Генерирует инвайт-ссылку для пользователя"""
     try:
         # Получаем пользователя
-        query = select(User).where(User.telegram_id == user_id)
+        query = select(User).where(User.id == user_id)
         result = await session.execute(query)
         user = result.scalar_one_or_none()
         
         if not user:
             logger.error(f"User {user_id} not found")
             return None
+
+        # Проверяем статус подписки
+        is_subscribed, _ = await check_subscription_status(session, user_id)
+        if not is_subscribed:
+            logger.error(f"User {user_id} does not have active subscription")
+            return None
             
         try:
             # Проверяем права бота в канале
-            bot_member = await bot.get_chat_member(chat_id=TARGET_CHAT, user_id=bot.id)
-            logger.info(f"Bot permissions in chat: {bot_member.permissions if hasattr(bot_member, 'permissions') else 'No permissions info'}")
+            bot_member = await bot.get_chat_member(chat_id=CHAT_ID, user_id=bot.id)
             
             if not bot_member.can_invite_users:
-                logger.error("Bot doesn't have rights to create invite links")
+                logger.error(f"Bot doesn't have invite rights in chat {CHAT_ID}")
                 return None
                 
             # Создаем инвайт-ссылку через API Telegram
             invite_link = await bot.create_chat_invite_link(
-                chat_id=TARGET_CHAT,
+                chat_id=CHAT_ID,
                 member_limit=1,
                 expire_date=datetime.now() + timedelta(days=1)
             )
@@ -104,13 +142,14 @@ async def generate_invite_link(session: AsyncSession, user_id: int, bot: Bot) ->
             new_invite = InviteLink(
                 user_id=user.id,
                 link=invite_link.invite_link,
-                chat_id=str(TARGET_CHAT),
+                chat_id=str(CHAT_ID),
                 is_used=False
             )
             
             session.add(new_invite)
             await session.commit()
             
+            logger.info(f"Created invite link for user {user_id}")
             return invite_link.invite_link
             
         except Exception as e:

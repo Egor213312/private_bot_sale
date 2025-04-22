@@ -60,20 +60,38 @@ async def get_user_by_telegram_id(telegram_id: int, session: AsyncSession) -> Us
     try:
         query = select(User).where(User.telegram_id == telegram_id)
         result = await session.execute(query)
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if not user:
+            logger.warning(f"Пользователь с telegram_id {telegram_id} не найден")
+        return user
     except Exception as e:
         logger.error(f"Ошибка при получении пользователя {telegram_id}: {e}")
-        raise
+        return None
 
 async def create_user(telegram_id: int, full_name: str, email: str, phone: str, session: AsyncSession) -> User:
     """Создание нового пользователя"""
     try:
+        # Проверяем, не существует ли уже пользователь с таким telegram_id
+        existing_user = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        if existing_user.scalar_one_or_none():
+            logger.warning(f"Пользователь с telegram_id {telegram_id} уже существует")
+            return None
+
+        # Проверяем, не существует ли уже пользователь с таким email
+        existing_email = await session.execute(
+            select(User).where(User.email == email.lower().strip())
+        )
+        if existing_email.scalar_one_or_none():
+            logger.warning(f"Пользователь с email {email} уже существует")
+            return None
+
         user = User(
             telegram_id=telegram_id,
             full_name=full_name,
-            email=email,
-            phone=phone,
-            is_subscribed=False
+            email=email.lower().strip(),
+            phone=phone
         )
         session.add(user)
         await session.commit()
@@ -81,4 +99,5 @@ async def create_user(telegram_id: int, full_name: str, email: str, phone: str, 
         return user
     except Exception as e:
         logger.error(f"Ошибка при создании пользователя {telegram_id}: {e}")
-        raise
+        await session.rollback()
+        return None

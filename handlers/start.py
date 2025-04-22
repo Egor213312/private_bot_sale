@@ -1,11 +1,11 @@
-from aiogram import types, Router, F
+from aiogram import types, Router, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from db import get_user_by_telegram_id, create_user
 from states import RegistrationState
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.subscription_manager import check_subscription_status
-from handlers.invite import handle_invite_request
+from handlers.invite import cmd_invite
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
 import logging
@@ -46,7 +46,6 @@ def get_invite_button() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-
 @router.message(Command("start"))
 async def cmd_start(message: Message, session: AsyncSession, state: FSMContext):
     """Обработчик команды /start"""
@@ -83,42 +82,24 @@ async def cmd_start(message: Message, session: AsyncSession, state: FSMContext):
         await message.answer("❌ Произошла ошибка. Попробуйте позже.")
 
 @router.message(UserRegistration.waiting_for_phone)
-async def process_phone(message: Message, session: AsyncSession, state: FSMContext):
+async def process_phone(message: Message, state: FSMContext):
     """Обработка номера телефона"""
-    try:
-        if message.contact:
-            phone = message.contact.phone_number
-        else:
-            phone = message.text
-
-        if not phone:
-            await message.answer(
-                "❌ Пожалуйста, отправьте номер телефона, используя кнопку ниже или введите его вручную.\n"
-                "Формат: +7XXXXXXXXXX"
-            )
-            return
-
-        if not is_valid_phone(phone):
-            await message.answer(
-                "❌ Некорректный формат номера телефона.\n"
-                "Пожалуйста, используйте кнопку или введите номер в формате: +7XXXXXXXXXX"
-            )
-            return
-
-        formatted_phone = format_phone(phone)
-        await state.update_data(phone=formatted_phone)
-        
+    if not message.contact or not message.contact.phone_number:
         await message.answer(
-            "✅ Номер телефона принят!\n\n"
-            "Теперь введите ваш email:",
-            reply_markup=ReplyKeyboardRemove()
+            "❌ Пожалуйста, используйте кнопку для отправки номера телефона."
         )
-        
-        await state.set_state(UserRegistration.waiting_for_email)
-        
-    except Exception as e:
-        logger.error(f"Ошибка при обработке номера телефона: {e}")
-        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+        return
+
+    # Сохраняем номер телефона
+    await state.update_data(phone=message.contact.phone_number)
+    
+    # Убираем клавиатуру с кнопкой телефона
+    await message.answer(
+        "📧 Теперь, пожалуйста, введите ваш email адрес:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    await state.set_state(UserRegistration.waiting_for_email)
 
 @router.message(UserRegistration.waiting_for_email)
 async def process_email(message: Message, session: AsyncSession, state: FSMContext):
@@ -137,6 +118,16 @@ async def process_email(message: Message, session: AsyncSession, state: FSMConte
         user_data = await state.get_data()
         phone = user_data.get("phone")
         
+        # Проверяем, не существует ли уже пользователь с таким telegram_id
+        existing_user = await get_user_by_telegram_id(message.from_user.id, session)
+        if existing_user:
+            await message.answer(
+                "❌ Вы уже зарегистрированы!\n"
+                "Используйте /info для просмотра информации о себе."
+            )
+            await state.clear()
+            return
+        
         # Создаем пользователя
         user = await create_user(
             telegram_id=message.from_user.id,
@@ -145,6 +136,13 @@ async def process_email(message: Message, session: AsyncSession, state: FSMConte
             phone=phone,
             session=session
         )
+        
+        if not user:
+            await message.answer(
+                "❌ Этот email уже используется другим пользователем.\n"
+                "Пожалуйста, введите другой email адрес."
+            )
+            return
         
         await message.answer(
             "✅ Регистрация успешно завершена!\n\n"
@@ -159,59 +157,27 @@ async def process_email(message: Message, session: AsyncSession, state: FSMConte
         
     except Exception as e:
         logger.error(f"Ошибка при обработке email: {e}")
-        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
-
-
-@router.callback_query(F.data == "get_invite_link")
-async def handle_invite_callback(callback: CallbackQuery, session: AsyncSession):
-    """Обработчик нажатия на кнопку получения инвайт-ссылки"""
-    try:
-        # Передаем управление в обработчик invite
-        await handle_invite_request(callback.message, session)
-        await callback.answer()
-    except Exception as e:
-        await callback.message.answer(
-            "❌ Произошла ошибка при получении ссылки.\n"
-            "Пожалуйста, попробуйте позже или обратитесь к администратору."
-        )
-        print(f"Ошибка в обработчике invite callback: {e}")
-        await callback.answer()
-
-
-@router.message(RegistrationState.full_name)
-async def process_full_name(message: Message, state: FSMContext):
-    await state.update_data(full_name=message.text)
-    await message.answer("Введите ваш email:")
-    await state.set_state(RegistrationState.email)
-
-
-@router.message(RegistrationState.email)
-async def process_email(message: Message, state: FSMContext, session: AsyncSession):
-    try:
-        user_data = await state.get_data()
-        full_name = user_data.get("full_name")
-        email = message.text
-
-        # Создаем пользователя
-        user = await create_user(
-            telegram_id=message.from_user.id,
-            full_name=full_name,
-            email=email,
-            session=session
-        )
-
-        await message.answer(
-            "✅ Регистрация успешно завершена!\n\n"
-            "Теперь вы можете:\n"
-            "1. Активировать подписку командой /buy\n"
-            "2. Проверить статус подписки командой /subscription"
-        )
-        await state.clear()
-
-    except Exception as e:
         await message.answer(
             "❌ Произошла ошибка при регистрации.\n"
             "Пожалуйста, попробуйте позже или обратитесь к администратору."
         )
-        print(f"Ошибка при регистрации пользователя: {e}")
         await state.clear()
+
+@router.callback_query(F.data == "get_invite_link")
+async def handle_invite_callback(callback: CallbackQuery, session: AsyncSession, bot: Bot):
+    """Обработчик нажатия на кнопку получения инвайт-ссылки"""
+    try:
+        # Создаем новое сообщение для обработки
+        message = callback.message
+        message.from_user = callback.from_user
+        
+        # Передаем управление в обработчик invite
+        await cmd_invite(message, session, bot)
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"Ошибка в обработчике invite callback: {e}")
+        await callback.message.answer(
+            "❌ Произошла ошибка при получении ссылки.\n"
+            "Пожалуйста, попробуйте позже или обратитесь к администратору."
+        )
+        await callback.answer()

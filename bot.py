@@ -7,7 +7,7 @@ from db import engine, create_db, async_session
 import os
 from dotenv import load_dotenv
 from handlers import start, admin, info, invite, subscription
-from utils.subscription_manager import start_subscription_checker
+from utils.subscription_checker import start_subscription_checker
 from middlewares.db import DatabaseMiddleware
 
 # Настройка логирования
@@ -47,18 +47,16 @@ async def main():
         await bot.set_my_commands([
             BotCommand(command="start", description="Начать"),
             BotCommand(command="info", description="Профиль"),
-            BotCommand(command="admin", description="Админ-панель"),
-            BotCommand(command="buy", description="Активация подписки"),
-            BotCommand(command="subscription", description="Информация о подписке"),
-            BotCommand(command="invite", description="Получить инвайт-ссылку"),
+            BotCommand(command="subscription", description="Управление подпиской"),
+            BotCommand(command="invite", description="Получить инвайт-ссылку")
         ])
         logger.info("Команды бота успешно установлены")
 
-        # Запуск проверки подписок в фоновом режиме
+        # Запускаем проверку подписок в фоновом режиме
         asyncio.create_task(start_subscription_checker(async_session(), bot))
         logger.info("Фоновая проверка подписок запущена")
 
-        # Запуск бота
+        # Запускаем бота
         logger.info("Бот запускается...")
         await dp.start_polling(bot)
 

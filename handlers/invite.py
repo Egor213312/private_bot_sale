@@ -1,59 +1,68 @@
-from aiogram import Router, types, Bot
+from aiogram import Router, Bot
 from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
-from db import get_user_by_telegram_id
-from utils.subscription_manager import generate_invite_link
+from sqlalchemy.sql import select
+from models import User, Subscription, InviteLink
+from utils.subscription_manager import generate_invite_code
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-async def handle_invite_request(message: Message, session: AsyncSession, bot: Bot) -> None:
-    """Обработка запроса на получение инвайт-ссылки"""
+@router.message(Command("invite"))
+async def cmd_invite(message: Message, session: AsyncSession):
+    """Обработчик команды /invite"""
     try:
-        user_id = message.from_user.id
-        user = await get_user_by_telegram_id(user_id, session)
-        
+        # Получаем пользователя
+        user_query = select(User).where(User.telegram_id == message.from_user.id)
+        result = await session.execute(user_query)
+        user = result.scalar_one_or_none()
+
         if not user:
-            await message.answer(
-                "❌ Вы не зарегистрированы.\n"
-                "Используйте команду /start для регистрации."
-            )
+            await message.answer("❌ Вы не зарегистрированы в системе. Используйте команду /start")
             return
-            
-        if not user.is_subscribed:
+
+        # Проверяем, есть ли у пользователя активная подписка
+        sub_query = select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.is_active == True
+        )
+        sub_result = await session.execute(sub_query)
+        subscription = sub_result.scalar_one_or_none()
+
+        if not subscription:
             await message.answer(
                 "❌ У вас нет активной подписки.\n"
-                "Пожалуйста, обратитесь к администратору для получения подписки."
+                "Для получения инвайт-ссылки необходимо приобрести подписку."
             )
             return
-            
-        # Генерируем инвайт-ссылку
-        invite_link = await generate_invite_link(session, user_id, bot)
+
+        # Создаем новую инвайт-ссылку
+        invite_link = InviteLink(
+            user_id=user.id,
+            code=generate_invite_code(),
+            is_used=False,
+            created_at=datetime.now()
+        )
         
-        if invite_link:
-            await message.answer(
-                "✅ Ваша инвайт-ссылка успешно создана!\n\n"
-                f"🔗 Ссылка: {invite_link}\n\n"
-                "⚠️ Важно:\n"
-                "- Ссылка действительна 24 часа\n"
-                "- Может быть использована только один раз"
-            )
-        else:
-            await message.answer(
-                "❌ Не удалось сгенерировать инвайт-ссылку.\n"
-                "Пожалуйста, попробуйте позже или обратитесь к администратору."
-            )
-            
-    except Exception as e:
-        logger.error(f"Ошибка при обработке запроса инвайт-ссылки: {e}")
+        # Добавляем ссылку в базу данных
+        session.add(invite_link)
+        await session.commit()
+
+        # Формируем полную ссылку
+        full_link = f"https://t.me/{message.bot.username}?start={invite_link.code}"
+
+        # Отправляем сообщение с инвайт-ссылкой
         await message.answer(
-            "❌ Произошла ошибка при создании инвайт-ссылки.\n"
-            "Пожалуйста, попробуйте позже."
+            "🎁 Ваша инвайт-ссылка:\n\n"
+            f"<code>{full_link}</code>\n\n"
+            "📝 Отправьте эту ссылку другу, чтобы пригласить его в бота.\n"
+            "⚠️ Ссылка действительна только для одного использования.",
+            parse_mode="HTML"
         )
 
-@router.message(Command("invite"))
-async def handle_invite_command(message: Message, session: AsyncSession, bot: Bot) -> None:
-    """Обработчик команды /invite"""
-    await handle_invite_request(message, session, bot)
+    except Exception as e:
+        logger.error(f"Ошибка при обработке команды invite: {e}")
+        await message.answer("❌ Произошла ошибка при создании инвайт-ссылки.")
