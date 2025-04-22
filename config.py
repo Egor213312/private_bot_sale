@@ -6,7 +6,7 @@ load_dotenv()
 
 # Bot configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_ID", "0").split(",")]
+ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "0").split(",")]
 CLOSED_CHANNEL_ID = int(os.getenv("CLOSED_CHANNEL_ID", "0"))
 
 # Payment configuration

@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    """Проверяет, является ли пользователь администратором"""
+    logger.info(f"Checking admin rights for user_id: {user_id}")
+    logger.info(f"ADMIN_IDS: {ADMIN_IDS}")
+    is_admin = user_id in ADMIN_IDS
+    logger.info(f"Is admin: {is_admin}")
+    return is_admin
 
 def get_user_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Создает клавиатуру с действиями для пользователя"""
@@ -40,7 +45,7 @@ def get_user_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
 async def cmd_admin(message: Message, session: AsyncSession):
     """Обработчик команды /admin"""
     try:
-        if not await is_admin(message.from_user.id):
+        if not is_admin(message.from_user.id):
             await message.answer("У вас нет прав администратора")
             return
 
