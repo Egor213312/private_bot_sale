@@ -13,7 +13,7 @@ from sqlalchemy import select
 from db import get_user_by_telegram_id
 import logging
 from datetime import datetime, timedelta
-from config import SUBSCRIPTION_PRICES, PAYMENT_CARD, PAYMENT_RECEIVER
+from config import SUBSCRIPTION_PRICES, PAYMENT_CARD, PAYMENT_RECEIVER, ADMIN_IDS
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -263,8 +263,8 @@ async def cmd_buy(message: Message, session: AsyncSession):
         is_active, days_left = await check_subscription_status(session, message.from_user.id)
         if is_active:
             await message.answer(
-                f"У вас уже есть активная подписка!\n"
-                f"Осталось дней: {days_left}"
+                f"🎫 У вас уже есть активная подписка!\n"
+                f"⏳ Осталось дней: {days_left}"
             )
             return
 
@@ -293,15 +293,16 @@ async def process_buy_subscription(callback: CallbackQuery, session: AsyncSessio
         # Формируем сообщение с реквизитами
         payment_message = (
             f"💳 <b>Оплата подписки на {months} месяц(ев)</b>\n\n"
-            f"Сумма к оплате: {price}₽\n\n"
-            "Реквизиты для оплаты:\n"
-            f"Карта: {PAYMENT_CARD}\n"
-            f"Получатель: {PAYMENT_RECEIVER}\n\n"
-            "После оплаты:\n"
+            f"💰 Сумма к оплате: {price}₽\n\n"
+            "💳 Реквизиты для оплаты:\n"
+            f"📱 Номер телефона: 89870812935\n"
+            f"💳 Карта: {PAYMENT_CARD}\n"
+            f"👤 Получатель: {PAYMENT_RECEIVER}\n\n"
+            "📝 После оплаты:\n"
             "1. Сделайте скриншот чека\n"
-            "2. Отправьте его администратору в личные сообщения\n"
+            f"2. Отправьте его администратору по номеру: 89870812935\n"
             f"3. Укажите ваш ID: {callback.from_user.id}\n\n"
-            "После проверки платежа подписка будет активирована в течение 24 часов"
+            "⏳ После проверки платежа подписка будет активирована в течение 24 часов"
         )
 
         await callback.message.edit_text(
@@ -312,4 +313,73 @@ async def process_buy_subscription(callback: CallbackQuery, session: AsyncSessio
 
     except Exception as e:
         logger.error(f"Error in process_buy_subscription: {e}")
-        await callback.answer("Произошла ошибка при обработке платежа") 
+        await callback.answer("Произошла ошибка при обработке платежа")
+
+@router.message(Command("activate_sub"))
+async def cmd_activate_subscription(message: Message, session: AsyncSession):
+    """Активация подписки администратором"""
+    try:
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("У вас нет прав администратора")
+            return
+
+        # Проверяем формат команды: /activate_sub user_id months
+        parts = message.text.split()
+        if len(parts) != 3:
+            await message.answer(
+                "Неверный формат команды.\n"
+                "Используйте: /activate_sub user_id months\n"
+                "Пример: /activate_sub 123456789 3"
+            )
+            return
+
+        try:
+            user_id = int(parts[1])
+            months = int(parts[2])
+        except ValueError:
+            await message.answer("ID пользователя и количество месяцев должны быть числами")
+            return
+
+        # Получаем пользователя
+        query = select(User).where(User.telegram_id == user_id)
+        result = await session.execute(query)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            await message.answer("Пользователь не найден")
+            return
+
+        # Создаем подписку
+        subscription = await create_subscription(
+            session=session,
+            user_id=user.id,
+            duration_days=months * 30,
+            auto_renewal=False
+        )
+
+        await message.answer(
+            f"✅ Подписка успешно активирована!\n\n"
+            f"👤 Пользователь: {user.full_name}\n"
+            f"🆔 ID: {user.telegram_id}\n"
+            f"⏳ Срок: {months} месяцев\n"
+            f"📅 Действует до: {subscription.end_date.strftime('%d.%m.%Y')}"
+        )
+
+        # Уведомляем пользователя
+        try:
+            await message.bot.send_message(
+                chat_id=user.telegram_id,
+                text=(
+                    f"🎉 Ваша подписка активирована!\n\n"
+                    f"⏳ Срок: {months} месяцев\n"
+                    f"📅 Действует до: {subscription.end_date.strftime('%d.%m.%Y')}\n\n"
+                    f"📋 Используйте команду /subscription для проверки статуса\n"
+                    f"🔗 Для получения доступа к закрытому каналу используйте команду /invite"
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error sending notification to user {user.telegram_id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error in cmd_activate_subscription: {e}")
+        await message.answer("Произошла ошибка при активации подписки") 

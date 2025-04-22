@@ -39,25 +39,26 @@ def get_user_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, session: AsyncSession):
     """Обработчик команды /admin"""
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔️ У вас нет доступа к админ-панели.")
-        return
-
     try:
-        # Формируем сообщение со списком админских команд
-        admin_commands = (
-            "👨‍💼 <b>Доступные команды администратора:</b>\n\n"
-            "📊 <code>/admin_stats</code> - Показать статистику бота\n"
-            "📢 <code>/admin_broadcast</code> - Сделать рассылку\n"
-            "👥 <code>/admin_users</code> - Управление пользователями\n\n"
-            "ℹ️ Эти команды доступны только администраторам"
+        if not await is_admin(message.from_user.id):
+            await message.answer("У вас нет прав администратора")
+            return
+
+        help_text = (
+            "👨‍💼 <b>Панель администратора</b>\n\n"
+            "Доступные команды:\n"
+            "📊 /admin_stats - Статистика бота\n"
+            "📢 /admin_broadcast - Отправить сообщение всем пользователям\n"
+            "👥 /admin_users - Список пользователей\n"
+            "🎫 /activate_sub user_id months - Активировать подписку пользователю\n\n"
+            "Пример: /activate_sub 123456789 3"
         )
 
-        await message.answer(admin_commands, parse_mode="HTML")
+        await message.answer(help_text, parse_mode="HTML")
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке команды admin: {e}")
-        await message.answer("❌ Произошла ошибка при получении списка команд.")
+        logger.error(f"Error in cmd_admin: {e}")
+        await message.answer("Произошла ошибка при обработке команды")
 
 @router.message(Command("admin_broadcast"))
 async def cmd_admin_broadcast(message: Message, session: AsyncSession) -> None:
