@@ -18,8 +18,32 @@ from config import SUBSCRIPTION_PRICES, PAYMENT_CARD, PAYMENT_RECEIVER
 logger = logging.getLogger(__name__)
 router = Router()
 
-def get_subscription_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для управления подпиской"""
+def get_buy_subscription_keyboard() -> InlineKeyboardMarkup:
+    """Создает клавиатуру с тарифами подписки для покупки"""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text=f"1 месяц - {SUBSCRIPTION_PRICES[1]}₽",
+                callback_data="buy_sub_1"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"3 месяца - {SUBSCRIPTION_PRICES[3]}₽",
+                callback_data="buy_sub_3"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"12 месяцев - {SUBSCRIPTION_PRICES[12]}₽",
+                callback_data="buy_sub_12"
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_extend_subscription_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для продления подписки"""
     keyboard = [
         [
             InlineKeyboardButton(
@@ -39,30 +63,6 @@ def get_subscription_keyboard(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text="1 год",
                 callback_data=f"sub_extend_{user_id}_365"
-            )
-        ]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-def get_subscription_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру с тарифами подписки"""
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                text=f"1 месяц - {SUBSCRIPTION_PRICES[1]}₽",
-                callback_data="buy_sub_1"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"3 месяца - {SUBSCRIPTION_PRICES[3]}₽",
-                callback_data="buy_sub_3"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"12 месяцев - {SUBSCRIPTION_PRICES[12]}₽",
-                callback_data="buy_sub_12"
             )
         ]
     ]
@@ -158,9 +158,13 @@ async def handle_payment_success(callback: CallbackQuery, session: AsyncSession)
 
 @router.message(Command("subscription"))
 async def cmd_subscription(message: Message, session: AsyncSession):
-    """Показывает информацию о подписке и варианты продления"""
+    """Показывает информацию о подписке"""
     try:
-        user = await get_user_by_telegram_id(message.from_user.id, session)
+        # Получаем пользователя
+        query = select(User).where(User.telegram_id == message.from_user.id)
+        result = await session.execute(query)
+        user = result.scalar_one_or_none()
+        
         if not user:
             await message.answer(
                 "❌ Вы не зарегистрированы.\n"
@@ -168,6 +172,7 @@ async def cmd_subscription(message: Message, session: AsyncSession):
             )
             return
 
+        # Проверяем статус подписки
         is_active, days_left = await check_subscription_status(session, user.id)
         
         # Получаем историю подписок
@@ -182,17 +187,22 @@ async def cmd_subscription(message: Message, session: AsyncSession):
                 f"✅ <b>Подписка активна</b>\n"
                 f"⏳ Дней осталось: {days_left}\n"
                 f"📅 Дата окончания: {current_sub.end_date.strftime('%d.%m.%Y')}\n"
-                f"🔄 Автопродление: {'Включено' if current_sub and getattr(current_sub, 'auto_renewal', False) else 'Отключено'}"
+                f"🔄 Автопродление: {'Включено' if current_sub and getattr(current_sub, 'auto_renewal', False) else 'Отключено'}\n\n"
+                f"Для продления подписки используйте команду /buy"
             )
         else:
             last_sub = subscriptions[0] if subscriptions else None
             if last_sub:
                 status_text = (
                     f"❌ <b>Подписка неактивна</b>\n"
-                    f"📅 Последняя подписка закончилась: {last_sub.end_date.strftime('%d.%m.%Y')}"
+                    f"📅 Последняя подписка закончилась: {last_sub.end_date.strftime('%d.%m.%Y')}\n\n"
+                    f"Для активации подписки используйте команду /buy"
                 )
             else:
-                status_text = "❌ <b>У вас ещё не было подписки</b>"
+                status_text = (
+                    "❌ <b>У вас ещё не было подписки</b>\n\n"
+                    "Для активации подписки используйте команду /buy"
+                )
             
         # Формируем историю подписок
         history_text = ""
@@ -208,14 +218,12 @@ async def cmd_subscription(message: Message, session: AsyncSession):
         message_text = (
             f"👤 <b>Информация о подписке</b>\n\n"
             f"{status_text}\n\n"
-            f"{history_text}\n"
-            "💫 <b>Доступные периоды продления:</b>"
+            f"{history_text}"
         )
         
         await message.answer(
             message_text,
-            parse_mode="HTML",
-            reply_markup=get_subscription_keyboard(user.id)
+            parse_mode="HTML"
         )
         
     except Exception as e:
@@ -267,7 +275,7 @@ async def cmd_buy(message: Message, session: AsyncSession):
             "2️⃣ 3 месяца - скидка 17%\n"
             "3️⃣ 12 месяцев - скидка 33%\n\n"
             "После оплаты отправьте чек администратору в личные сообщения",
-            reply_markup=get_subscription_keyboard(),
+            reply_markup=get_buy_subscription_keyboard(),
             parse_mode="HTML"
         )
 
