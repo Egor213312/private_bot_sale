@@ -42,24 +42,25 @@ class Subscription(Base):
     
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    start_date = Column(DateTime, nullable=False, default=datetime.now)
+    start_date = Column(DateTime, nullable=False)
     end_date = Column(DateTime, nullable=False)
-    is_active = Column(Boolean, default=True)
-    auto_renewal = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    is_active = Column(Boolean, nullable=False, default=True)
+    auto_renewal = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
     
     # Relationships
     user = relationship("User", back_populates="subscriptions")
 
     def __repr__(self):
-        return f"<Subscription(user_id={self.user_id}, end_date={self.end_date}, is_active={self.is_active})>"
+        return f"<Subscription(id={self.id}, user_id={self.user_id}, start_date={self.start_date}, end_date={self.end_date}, is_active={self.is_active})>"
 
 class InviteLink(Base):
     __tablename__ = 'invite_links'
     
     id = Column(Integer, primary_key=True)
     code = Column(String, unique=True, nullable=False)
+    link = Column(String, unique=True, nullable=False)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     is_used = Column(Boolean, default=False)
     used_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)

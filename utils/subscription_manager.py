@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 import secrets
 import string
+from sqlalchemy.orm import joinedload
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -24,19 +25,30 @@ def generate_invite_code(length: int = 8) -> str:
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
-async def create_subscription(session: AsyncSession, user_id: int, duration_days: int) -> Subscription:
+async def create_subscription(
+    session: AsyncSession,
+    user_id: int,
+    duration_days: int,
+    auto_renewal: bool = False
+) -> Subscription:
     """Создает новую подписку для пользователя"""
     try:
+        # Получаем пользователя
+        user = await session.get(User, user_id)
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+            
         # Деактивируем все текущие подписки пользователя
-        current_subs = await session.execute(
-            select(Subscription).where(
-                Subscription.user_id == user_id,
-                Subscription.is_active == True
-            )
+        query = select(Subscription).where(
+            Subscription.user_id == user_id,
+            Subscription.is_active == True
         )
-        for sub in current_subs.scalars():
+        result = await session.execute(query)
+        current_subscriptions = result.scalars().all()
+        
+        for sub in current_subscriptions:
             sub.is_active = False
-
+        
         # Создаем новую подписку
         start_date = datetime.now()
         end_date = start_date + timedelta(days=duration_days)
@@ -45,60 +57,61 @@ async def create_subscription(session: AsyncSession, user_id: int, duration_days
             user_id=user_id,
             start_date=start_date,
             end_date=end_date,
-            is_active=True
+            is_active=True,
+            auto_renewal=auto_renewal
         )
         
-        # Обновляем статус подписки у пользователя
-        user = await session.execute(select(User).where(User.id == user_id))
-        user = user.scalar_one()
-        user.is_subscribed = True
-        
+        # Добавляем подписку в сессию
         session.add(subscription)
         await session.commit()
         
-        logger.info(f"Создана новая подписка для пользователя {user_id} на {duration_days} дней")
+        # Обновляем объекты
+        await session.refresh(subscription)
+        await session.refresh(user)
+        
+        logger.info(f"Создана новая подписка для пользователя {user_id}: {subscription}")
         return subscription
         
     except Exception as e:
         logger.error(f"Ошибка при создании подписки: {e}")
-        await session.rollback()
-        raise
+        raise e
 
 async def check_subscription_status(session: AsyncSession, user_id: int) -> tuple[bool, int]:
-    """Проверяет статус подписки пользователя"""
+    """
+    Проверяет статус подписки пользователя
+    Возвращает tuple[bool, int]:
+    - bool: True если подписка активна, False если нет
+    - int: количество оставшихся дней подписки (0 если подписка неактивна)
+    """
     try:
-        # Сначала проверяем, есть ли пользователь
-        user_query = select(User).where(User.id == user_id)
-        user_result = await session.execute(user_query)
-        user = user_result.scalar_one_or_none()
-        
-        if not user:
-            logger.warning(f"Пользователь {user_id} не найден при проверке подписки")
-            return False, 0
-
-        # Проверяем активную подписку
-        query = select(Subscription).where(
-            and_(
-                Subscription.user_id == user_id,
-                Subscription.is_active == True
-            )
-        )
+        # Получаем пользователя с его подписками
+        query = select(User).where(User.id == user_id).options(joinedload(User.subscriptions))
         result = await session.execute(query)
-        subscription = result.scalar_one_or_none()
+        user = result.unique().scalar_one_or_none()
 
-        if not subscription:
-            logger.info(f"У пользователя {user_id} нет активной подписки")
+        if not user:
+            logger.error(f"Пользователь с id {user_id} не найден")
             return False, 0
 
+        # Получаем все активные подписки
+        active_subscriptions = [sub for sub in user.subscriptions if sub.is_active]
+        
+        if not active_subscriptions:
+            return False, 0
+
+        # Находим подписку с самой поздней датой окончания
+        latest_subscription = max(active_subscriptions, key=lambda x: x.end_date)
+        
+        # Проверяем, не истекла ли подписка
         now = datetime.now()
-        if subscription.end_date <= now:
-            logger.info(f"Подписка пользователя {user_id} истекла")
-            subscription.is_active = False
+        if latest_subscription.end_date < now:
+            # Помечаем подписку как неактивную
+            latest_subscription.is_active = False
             await session.commit()
             return False, 0
 
-        days_left = (subscription.end_date - now).days
-        logger.info(f"У пользователя {user_id} активная подписка, осталось {days_left} дней")
+        # Вычисляем оставшиеся дни
+        days_left = (latest_subscription.end_date - now).days
         return True, days_left
 
     except Exception as e:
@@ -140,10 +153,10 @@ async def generate_invite_link(session: AsyncSession, user_id: int, bot: Bot) ->
             
             # Сохраняем ссылку в базе данных
             new_invite = InviteLink(
-                user_id=user.id,
-                link=invite_link.invite_link,
-                chat_id=str(CHAT_ID),
-                is_used=False
+                code=generate_invite_code(),
+                created_by_id=user.id,
+                is_used=False,
+                link=invite_link.invite_link
             )
             
             session.add(new_invite)
@@ -158,7 +171,6 @@ async def generate_invite_link(session: AsyncSession, user_id: int, bot: Bot) ->
         
     except Exception as e:
         logger.error(f"Error generating invite link: {str(e)}")
-        await session.rollback()
         return None
 
 async def check_expiring_subscriptions(session: AsyncSession, bot: Bot):

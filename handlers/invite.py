@@ -1,68 +1,72 @@
 from aiogram import Router, Bot
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import select
 from models import User, Subscription, InviteLink
-from utils.subscription_manager import generate_invite_code
+from utils.subscription_manager import generate_invite_code, check_subscription_status, generate_invite_link
 import logging
 from datetime import datetime
+import os
 
 logger = logging.getLogger(__name__)
 router = Router()
+BOT_USERNAME = os.getenv("BOT_USERNAME")
+
+async def get_user_by_telegram_id(session: AsyncSession, telegram_id: int) -> User | None:
+    """Получает пользователя по telegram_id"""
+    try:
+        async with session.begin_nested():
+            query = select(User).where(User.telegram_id == telegram_id)
+            result = await session.execute(query)
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"Ошибка при получении пользователя: {e}")
+        return None
 
 @router.message(Command("invite"))
-async def cmd_invite(message: Message, session: AsyncSession):
+async def cmd_invite(message: Message, session: AsyncSession, bot: Bot) -> None:
     """Обработчик команды /invite"""
     try:
         # Получаем пользователя
-        user_query = select(User).where(User.telegram_id == message.from_user.id)
-        result = await session.execute(user_query)
-        user = result.scalar_one_or_none()
-
+        user = await get_user_by_telegram_id(session, message.from_user.id)
         if not user:
-            await message.answer("❌ Вы не зарегистрированы в системе. Используйте команду /start")
+            await message.answer("❌ Вы не зарегистрированы в системе. Используйте /start для регистрации.")
             return
 
-        # Проверяем, есть ли у пользователя активная подписка
-        sub_query = select(Subscription).where(
-            Subscription.user_id == user.id,
-            Subscription.is_active == True
-        )
-        sub_result = await session.execute(sub_query)
-        subscription = sub_result.scalar_one_or_none()
-
-        if not subscription:
+        # Проверяем наличие активной подписки
+        is_subscribed, _ = await check_subscription_status(session, user.id)
+        if not is_subscribed:
             await message.answer(
                 "❌ У вас нет активной подписки.\n"
-                "Для получения инвайт-ссылки необходимо приобрести подписку."
+                "Используйте /subscription для получения подписки."
             )
             return
 
-        # Создаем новую инвайт-ссылку
-        invite_link = InviteLink(
-            user_id=user.id,
-            code=generate_invite_code(),
-            is_used=False,
-            created_at=datetime.now()
-        )
+        # Генерируем инвайт-ссылку
+        invite_link = await generate_invite_link(session, user.id, bot)
         
-        # Добавляем ссылку в базу данных
-        session.add(invite_link)
-        await session.commit()
+        if not invite_link:
+            await message.answer(
+                "❌ Произошла ошибка при создании приглашения.\n"
+                "Пожалуйста, попробуйте позже или обратитесь к администратору."
+            )
+            return
 
-        # Формируем полную ссылку
-        full_link = f"https://t.me/{message.bot.username}?start={invite_link.code}"
-
-        # Отправляем сообщение с инвайт-ссылкой
+        # Отправляем сообщение с ссылкой
         await message.answer(
-            "🎁 Ваша инвайт-ссылка:\n\n"
-            f"<code>{full_link}</code>\n\n"
-            "📝 Отправьте эту ссылку другу, чтобы пригласить его в бота.\n"
-            "⚠️ Ссылка действительна только для одного использования.",
-            parse_mode="HTML"
+            f"🎁 Ваша инвайт-ссылка в закрытый канал:\n\n"
+            f"{invite_link}\n\n"
+            f"⚠️ Ссылка действительна 24 часа и может быть использована только один раз.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={invite_link}")]
+                ]
+            )
         )
-
     except Exception as e:
         logger.error(f"Ошибка при обработке команды invite: {e}")
-        await message.answer("❌ Произошла ошибка при создании инвайт-ссылки.")
+        await message.answer(
+            "❌ Произошла ошибка при создании приглашения.\n"
+            "Пожалуйста, попробуйте позже."
+        )
