@@ -146,8 +146,8 @@ python -m unittest discover
 
 ## 📞 Контакты
 
-- Telegram: [@your_tg](https://t.me/your_tg)
-- Issues: [github.com/ваш_репозиторий/issues](https://github.com/ваш_репозиторий/issues)
+- Telegram: @Egor11011
+
 
 ---
 
