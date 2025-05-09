@@ -1,81 +1,143 @@
-# Telegram Bot with Subscription System
+# Телеграм-бот с системой подписок
 
-This is a Telegram bot project built with Python, using the aiogram framework and SQLAlchemy for database management. The bot implements a subscription system with user management capabilities.
+Данный проект представляет собой Telegram-бота, реализованного на Python с использованием фреймворка aiogram и SQLAlchemy для управления базой данных. Бот поддерживает систему подписок, управление пользователями и инвайт-ссылки.
 
-## Project Structure
+---
 
-```
-.
-├── bot.py              # Main bot configuration and startup
-├── db.py               # Database connection and operations
-├── models.py           # SQLAlchemy models
-├── database_init.py    # Database initialization
-├── states.py           # FSM states for bot
-├── .env                # Environment variables
-├── requirements.txt    # Project dependencies
-├── handlers/           # Bot command handlers
-│   ├── start.py       # Start command handler
-│   ├── admin.py       # Admin panel handler
-│   ├── info.py        # User info handler
-│   └── invite.py      # Invitation system handler
-└── utils/             # Utility functions
-```
+## 📋 Содержание
 
-## Features
+- О проекте
+- Возможности
+- Установка и запуск
+- Использование бота
+- Структура базы данных
+- Переменные окружения
+- Тестирование
+- Контакты
 
-- User registration and profile management
-- Subscription system
-- Admin panel for user management
-- Invitation system
-- Profile information display
+---
 
-## Database Structure
+## О проекте
 
-The project uses SQLAlchemy with the following main model:
+Проект — это система для управления подписками пользователей в Telegram с поддержкой инвайт-ссылок, панели администратора и хранения информации в базе данных PostgreSQL. Вся логика реализована на Python с использованием асинхронных технологий.
 
-### User Model
-- `id`: Primary key
-- `telegram_id`: Unique Telegram user ID
-- `full_name`: User's full name
-- `email`: User's email address
-- `is_subscribed`: Subscription status
+---
 
-## Setup
+## Возможности
 
-1. Clone the repository
-2. Install dependencies:
+- Регистрация и управление профилем пользователя
+- Система подписок с автоматическим продлением
+- Панель администратора для управления пользователями
+- Система инвайтов и инвайт-ссылок
+- Просмотр информации о профиле
+- Хранение данных в PostgreSQL
+- Асинхронная проверка подписок
+
+---
+
+## Установка и запуск
+
+### Локально
+
+1. Клонируйте репозиторий:
+   ```bash
+   git clone <адрес_вашего_репозитория>
+   cd <имя_папки_проекта>
+   ```
+2. Установите зависимости:
    ```bash
    pip install -r requirements.txt
    ```
-3. Create a `.env` file with the following variables:
+3. Создайте файл `.env` со следующими переменными:
    ```
-   BOT_TOKEN=your_telegram_bot_token
-   DATABASE_URL=your_database_url
+   BOT_TOKEN=ваш_токен_бота
+   DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/dbname
    ```
-4. Initialize the database:
+4. Инициализируйте базу данных:
    ```bash
    python database_init.py
    ```
-5. Run the bot:
+5. Запустите бота:
    ```bash
    python bot.py
    ```
 
-## Bot Commands
+---
 
-- `/start` - Start the bot
-- `/info` - View your profile
-- `/admin` - Access admin panel
-- `/buy` - Activate subscription
+## Использование бота
 
-## Technologies Used
+- `/start` — Начать работу с ботом
+- `/info` — Просмотреть свой профиль
+- `/admin` — Панель администратора
+- `/buy` — Активировать подписку
 
-- Python 3.x
-- aiogram (Telegram Bot Framework)
-- SQLAlchemy (ORM)
-- AsyncIO (Asynchronous I/O)
-- PostgreSQL (Database)
+---
 
-## Contributing
+## Структура базы данных
 
-Feel free to submit issues and enhancement requests. # private_bot
+Используется SQLAlchemy. Основные модели:
+
+### User (Пользователь)
+- `id` — первичный ключ
+- `telegram_id` — уникальный Telegram ID
+- `full_name` — имя пользователя
+- `email` — email пользователя
+- `phone` — телефон
+- `created_at` — дата создания
+- `updated_at` — дата обновления
+- `is_subscribed` — статус подписки (вычисляется)
+
+### Subscription (Подписка)
+- `id` — первичный ключ
+- `user_id` — внешний ключ на пользователя
+- `start_date` — дата начала
+- `end_date` — дата окончания
+- `is_active` — активна ли подписка
+- `auto_renewal` — автопродление
+
+### InviteLink (Инвайт-ссылка)
+- `id` — первичный ключ
+- `code` — уникальный код
+- `link` — ссылка
+- `created_by_id` — кто создал
+- `is_used` — использована ли
+- `used_by_id` — кто использовал
+
+### Invite (Инвайт)
+- `id` — первичный ключ
+- `user_id` — кто пригласил
+- `invited_user_id` — кого пригласили
+
+---
+
+## Переменные окружения
+
+| Переменная      | Описание                        | Пример значения                        |
+|-----------------|---------------------------------|----------------------------------------|
+| BOT_TOKEN       | Токен Telegram-бота             | 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11 |
+| DATABASE_URL    | URL для подключения к БД        | postgresql+asyncpg://user:pass@localhost:5432/dbname |
+
+---
+
+## Тестирование
+
+Для запуска тестов используйте:
+
+```bash
+pytest
+```
+или
+```bash
+python -m unittest discover
+```
+
+---
+
+## Контакты
+
+- Telegram: @your_tg
+- Issues: [github.com/ваш_репозиторий/issues](https://github.com/ваш_репозиторий/issues)
+
+---
+
+> © 2024 Ваше Имя. Проект с MIT лицензией.
