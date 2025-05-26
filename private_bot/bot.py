@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, InputFile
 from aiogram.fsm.storage.memory import MemoryStorage
 from db import engine, create_db, async_session
 import os
@@ -67,13 +67,17 @@ async def setup_webhook():
         webhook_url = f"https://{server_ip}:8443/webhook"
         logger.info(f"Настройка webhook на URL: {webhook_url}")
         
-        # Устанавливаем webhook
-        await bot.set_webhook(
-            url=webhook_url,
-            certificate=open('/root/private_bot/certs/cert.pem', 'rb'),
-            drop_pending_updates=True
-        )
-        logger.info("Webhook успешно установлен")
+        # Читаем сертификат
+        with open('/root/private_bot/certs/cert.pem', 'rb') as cert_file:
+            certificate = InputFile(cert_file)
+            
+            # Устанавливаем webhook
+            await bot.set_webhook(
+                url=webhook_url,
+                certificate=certificate,
+                drop_pending_updates=True
+            )
+            logger.info("Webhook успешно установлен")
         
         return webhook_url
     except Exception as e:
