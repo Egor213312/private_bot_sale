@@ -15,6 +15,7 @@ import sys
 import time
 from aiohttp import web
 import ssl
+from contextlib import asynccontextmanager
 
 # Настройка логирования
 logging.basicConfig(
@@ -42,6 +43,15 @@ dp = Dispatcher(storage=storage)
 # Добавление middleware
 dp.update.middleware(DatabaseMiddleware())
 
+@asynccontextmanager
+async def get_client_session():
+    """Контекстный менеджер для aiohttp.ClientSession"""
+    session = aiohttp.ClientSession()
+    try:
+        yield session
+    finally:
+        await session.close()
+
 async def delete_webhook():
     """Удаление webhook"""
     try:
@@ -58,7 +68,7 @@ async def setup_webhook():
         await delete_webhook()
         
         # Получаем IP сервера
-        async with aiohttp.ClientSession() as session:
+        async with get_client_session() as session:
             async with session.get('https://api.ipify.org?format=json') as response:
                 ip_data = await response.json()
                 server_ip = ip_data['ip']
@@ -124,6 +134,22 @@ async def webhook_handler(request):
         logger.error(f"Ошибка при обработке webhook: {e}")
         return web.Response(status=500)
 
+async def cleanup():
+    """Очистка ресурсов при завершении работы"""
+    try:
+        # Удаляем webhook
+        await delete_webhook()
+        
+        # Закрываем сессию бота
+        await bot.session.close()
+        
+        # Закрываем соединение с базой данных
+        await engine.dispose()
+        
+        logger.info("Ресурсы успешно очищены")
+    except Exception as e:
+        logger.error(f"Ошибка при очистке ресурсов: {e}")
+
 async def main():
     try:
         logger.info("Начало запуска бота...")
@@ -157,11 +183,18 @@ async def main():
         logger.info(f"Webhook URL: {webhook_url}")
         
         # Держим приложение запущенным
-        while True:
-            await asyncio.sleep(3600)
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            logger.info("Получен сигнал завершения работы")
+        finally:
+            await cleanup()
+            await runner.cleanup()
             
     except Exception as e:
         logger.error(f"Произошла ошибка при запуске бота: {e}")
+        await cleanup()
         raise
 
 if __name__ == "__main__":
