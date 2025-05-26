@@ -35,6 +35,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в .env файле")
 
+logger.info(f"Загружен токен бота: {BOT_TOKEN[:5]}...{BOT_TOKEN[-5:]}")
+
 # Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -55,8 +57,14 @@ async def get_client_session():
 async def delete_webhook():
     """Удаление webhook"""
     try:
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Текущая информация о webhook: {webhook_info}")
+        
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook успешно удален")
+        
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Информация о webhook после удаления: {webhook_info}")
     except Exception as e:
         logger.error(f"Ошибка при удалении webhook: {e}")
         raise
@@ -88,14 +96,33 @@ async def setup_webhook():
         )
         logger.info("Webhook успешно установлен")
         
+        # Проверяем информацию о webhook
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Информация о webhook после установки: {webhook_info}")
+        
         return webhook_url
     except Exception as e:
         logger.error(f"Ошибка при настройке webhook: {e}")
         raise
 
+async def webhook_handler(request):
+    """Обработчик webhook"""
+    try:
+        update = await request.json()
+        logger.info(f"Получено обновление: {update}")
+        await dp.feed_webhook_update(bot, update)
+        return web.Response()
+    except Exception as e:
+        logger.error(f"Ошибка при обработке webhook: {e}")
+        return web.Response(status=500)
+
 async def setup_bot():
     """Настройка бота"""
     try:
+        # Проверяем информацию о боте
+        bot_info = await bot.get_me()
+        logger.info(f"Информация о боте: {bot_info}")
+        
         # Создание базы данных
         await create_db()
         logger.info("База данных успешно инициализирована")
@@ -123,16 +150,6 @@ async def setup_bot():
     except Exception as e:
         logger.error(f"Ошибка при настройке бота: {e}")
         raise
-
-async def webhook_handler(request):
-    """Обработчик webhook"""
-    try:
-        update = await request.json()
-        await dp.feed_webhook_update(bot, update)
-        return web.Response()
-    except Exception as e:
-        logger.error(f"Ошибка при обработке webhook: {e}")
-        return web.Response(status=500)
 
 async def cleanup():
     """Очистка ресурсов при завершении работы"""
