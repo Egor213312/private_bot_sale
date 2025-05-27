@@ -172,4 +172,20 @@ async def cmd_invite(message: Message, bot):
     await message.answer(
         f"🎁 Ваша одноразовая инвайт-ссылка в закрытый канал:\n\n{invite.invite_link}\n\n"
         f"⚠️ Ссылка действительна 24 часа и может быть использована только один раз."
-    ) 
+    )
+
+@router.message(lambda m: m.text == "👤 Профиль")
+async def profile_btn(message: Message):
+    await cmd_info(message)
+
+@router.message(lambda m: m.text == "💳 Купить подписку")
+async def buy_btn(message: Message):
+    await cmd_buy(message)
+
+@router.message(lambda m: m.text == "📅 Информация о подписке")
+async def subinfo_btn(message: Message):
+    await cmd_subscription(message)
+
+@router.message(lambda m: m.text == "🔗 Получить ссылку")
+async def invite_btn(message: Message, bot):
+    await cmd_invite(message, bot) 

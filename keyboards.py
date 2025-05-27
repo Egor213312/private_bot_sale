@@ -2,16 +2,22 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 
 main_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="💳 Купить подписку")],
-        [KeyboardButton(text="📅 Информация о подписке"), KeyboardButton(text="🔗 Получить ссылку")],
+        [
+            KeyboardButton(text="👤 Профиль"),
+            KeyboardButton(text="💳 Купить подписку")
+        ],
+        [
+            KeyboardButton(text="📅 Информация о подписке"),
+            KeyboardButton(text="🔗 Получить ссылку")
+        ],
     ],
     resize_keyboard=True
 )
 
 tariff_kb = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="1 месяц - 200₽", callback_data="tariff_1")],
-        [InlineKeyboardButton(text="3 месяца - 500₽", callback_data="tariff_3")],
-        [InlineKeyboardButton(text="12 месяцев - 1500s₽", callback_data="tariff_12")],
+        [InlineKeyboardButton(text="1 месяц - 1000₽", callback_data="tariff_1")],
+        [InlineKeyboardButton(text="3 месяца - 2500₽", callback_data="tariff_3")],
+        [InlineKeyboardButton(text="12 месяцев - 8000₽", callback_data="tariff_12")],
     ]
 ) 
