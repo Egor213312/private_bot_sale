@@ -1,0 +1,14 @@
+git add .
+git commit -m "Ваш комментарий к изменению"
+git push
+
+cd /root/private_bot_sale
+systemctl stop privatebot
+git pull
+
+source venv/bin/activate
+pip install -r requirements.txt
+deactivate
+
+systemctl start privatebot
+systemctl status privatebot

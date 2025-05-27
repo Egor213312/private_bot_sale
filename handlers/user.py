@@ -7,6 +7,7 @@ from database import get_user, add_user, update_user_email, update_user_phone, g
 from keyboards import main_kb, tariff_kb
 from config import ADMIN_IDS, CHANNEL_ID
 from datetime import datetime, timedelta
+import re
 
 router = Router()
 
@@ -36,6 +37,11 @@ async def cmd_registration(message: Message, state: FSMContext):
 @router.message(Registration.waiting_for_phone)
 async def reg_phone(message: Message, state: FSMContext):
     phone = message.text.strip()
+    # Валидация телефона: только цифры, допускается +7, 7, 8, длина 10-15
+    phone_digits = re.sub(r'\D', '', phone)
+    if not (10 <= len(phone_digits) <= 15):
+        await message.answer("❗️ Введите корректный номер телефона (10-15 цифр, например, 89870812935 или +79870812935):")
+        return
     await state.update_data(phone=phone)
     await message.answer("Теперь, пожалуйста, введите ваш email:")
     await state.set_state(Registration.waiting_for_email)
@@ -43,6 +49,10 @@ async def reg_phone(message: Message, state: FSMContext):
 @router.message(Registration.waiting_for_email)
 async def reg_email(message: Message, state: FSMContext):
     email = message.text.strip()
+    # Валидация email
+    if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w{2,}$", email):
+        await message.answer("❗️ Введите корректный email (например, user@example.com):")
+        return
     data = await state.get_data()
     phone = data.get("phone")
     user = await get_user(message.from_user.id)
@@ -53,11 +63,11 @@ async def reg_email(message: Message, state: FSMContext):
         await update_user_email(message.from_user.id, email)
     await message.answer(
         f"✅ Регистрация успешно завершена!\n\n"
-        f"📋 <b>Ваши данные:</b>\n"
-        f"👤 Имя: {message.from_user.full_name}\n"
-        f"📱 Телефон: {phone}\n"
-        f"📧 Email: {email}\n\n"
-        f"ℹ️ Используйте /info для просмотра информации о себе."
+        f"<b>Ваши данные:</b>\n"
+        f"Имя: {message.from_user.full_name}\n"
+        f"Телефон: {phone}\n"
+        f"Email: {email}\n\n"
+        f"Используйте /info для просмотра информации о себе."
     )
     await state.clear()
 
