@@ -2,7 +2,7 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from database import get_user, add_user, update_user_email, update_user_phone, get_subscription, add_subscription, deactivate_subscriptions, add_invite_link, get_invite_link
 from keyboards import main_kb, tariff_kb
 from config import ADMIN_IDS, CHANNEL_ID
@@ -107,6 +107,11 @@ async def process_tariff(callback: CallbackQuery):
     days = {"1": 30, "3": 90, "12": 365}[tariff]
     price = {"1": 200, "3": 500, "12": 1500}[tariff]
     user = await get_user(callback.from_user.id)
+    pay_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Оплатил", callback_data=f"paid_{tariff}")]
+        ]
+    )
     await callback.message.answer(
         f"<b>💳 Оплата подписки на {days // 30} месяц(ев)</b>\n\n"
         f"💰 <b>Сумма к оплате:</b> {price}₽\n\n"
@@ -119,8 +124,30 @@ async def process_tariff(callback: CallbackQuery):
         f"1. Сделайте скриншот чека\n"
         f"2. Отправьте его администратору по номеру: 89870812935\n"
         f"3. Укажите ваш ID: <code>{user[1]}</code>\n\n"
-        f"⏳ После проверки платежа подписка будет активирована в течение 1 часа"
+        f"⏳ После проверки платежа подписка будет активирована в течение 1 часа",
+        reply_markup=pay_kb
     )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("paid_"))
+async def paid_callback(callback: CallbackQuery):
+    user = await get_user(callback.from_user.id)
+    tariff = callback.data.split("_")[1]
+    months = {"1": 1, "3": 3, "12": 12}[tariff]
+    for admin_id in ADMIN_IDS:
+        try:
+            await callback.bot.send_message(
+                admin_id,
+                f"💸 <b>Поступила заявка на оплату!</b>\n\n"
+                f"👤 Пользователь: <b>{user[2]}</b>\n"
+                f"🆔 ID: <code>{user[1]}</code>\n"
+                f"Тариф: {months} мес.\n\n"
+                f"Проверьте чек и активируйте подписку командой:\n"
+                f"/activate_sub {user[1]} {months}"
+            )
+        except Exception:
+            pass
+    await callback.message.answer("Спасибо! Ваша заявка на оплату отправлена администратору. Подписка будет активирована после проверки.")
     await callback.answer()
 
 @router.message(Command("subscription"))
