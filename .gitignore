@@ -1,0 +1,6 @@
+.env
+bot.db
+__pycache__/
+venv/
+*.sqlite3
+*.pyc
